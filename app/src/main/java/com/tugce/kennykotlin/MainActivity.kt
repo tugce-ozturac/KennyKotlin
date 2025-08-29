@@ -12,6 +12,7 @@ import android.widget.ImageView
 import android.util.TypedValue
 import android.view.HapticFeedbackConstants
 import android.view.animation.DecelerateInterpolator
+import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -34,6 +35,15 @@ class MainActivity : AppCompatActivity() {
     private val prefs by lazy { getSharedPreferences("kenny_prefs", MODE_PRIVATE) }
     private var bestScore = 0
     private var lastVisibleIndex = -1
+
+    // Zorluk seviyeleri
+    private var currentDifficulty = Difficulty.MEDIUM
+
+    enum class Difficulty(val delay: Long) {
+        EASY(1000L),
+        MEDIUM(700L),
+        HARD(400L)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -69,14 +79,29 @@ class MainActivity : AppCompatActivity() {
         bestScore = prefs.getInt("best_score", 0)
         binding.bestScoreText.text = "Best: $bestScore"
 
-        // ProgressBar ayarı
+        // ProgressBar
         binding.progressBar.max = (gameTime / 1000).toInt()
         binding.progressBar.progress = binding.progressBar.max
+
+        // Zorluk seviyesi butonu
+        binding.difficultyText.text = "Seviye: Orta"
+        binding.difficultyText.setOnClickListener {
+            currentDifficulty = when (currentDifficulty) {
+                Difficulty.EASY -> Difficulty.MEDIUM
+                Difficulty.MEDIUM -> Difficulty.HARD
+                Difficulty.HARD -> Difficulty.EASY
+            }
+            val text = when (currentDifficulty) {
+                Difficulty.EASY -> "Seviye: Kolay"
+                Difficulty.MEDIUM -> "Seviye: Orta"
+                Difficulty.HARD -> "Seviye: Zor"
+            }
+            binding.difficultyText.text = text
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // Activity kapanınca handler’ı durdur
         runnable?.let { handler.removeCallbacks(it) }
         countDownTimer?.cancel()
     }
@@ -84,6 +109,7 @@ class MainActivity : AppCompatActivity() {
     fun inCreaseScore(view: View) {
         view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         showSparkleEffectOver(view)
+        showPlusOneAnimation(view) // 🎉 +1 animasyonu
         score += 1
         binding.scoreText.text = "Score: $score"
     }
@@ -133,31 +159,56 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
+    private fun showPlusOneAnimation(anchorView: View) {
+        val root = binding.main
+
+        val rootLoc = IntArray(2)
+        val anchorLoc = IntArray(2)
+        root.getLocationOnScreen(rootLoc)
+        anchorView.getLocationOnScreen(anchorLoc)
+
+        val centerX = (anchorLoc[0] - rootLoc[0] + anchorView.width / 2f)
+        val centerY = (anchorLoc[1] - rootLoc[1] - 20f) // biraz yukarıda gözüksün
+
+        val plusOne = TextView(this).apply {
+            text = "+1"
+            setTextColor(Color.MAGENTA)
+            textSize = 20f
+            alpha = 1f
+        }
+
+        root.addView(plusOne)
+        plusOne.x = centerX
+        plusOne.y = centerY
+
+        plusOne.animate()
+            .translationYBy(-100f)
+            .alpha(0f)
+            .setDuration(800)
+            .withEndAction { root.removeView(plusOne) }
+            .start()
+    }
+
     private fun dpToPx(dp: Float): Float =
         TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, dp, resources.displayMetrics)
 
     fun startGame(view: View) {
-        // Oyunu başlat
         binding.startButton.visibility = View.GONE
         score = 0
         binding.scoreText.text = "Score: 0"
-
-        // Progress bar’ı resetle
         binding.progressBar.progress = binding.progressBar.max
 
-        // Sayaç
         countDownTimer?.cancel()
         countDownTimer = object : CountDownTimer(gameTime, 1000) {
             override fun onTick(millisUntilFinished: Long) {
                 val secondsLeft = (millisUntilFinished / 1000).toInt()
                 binding.timeText.text = "Time: $secondsLeft"
 
-                // Smooth progress update
                 val animator = ObjectAnimator.ofInt(binding.progressBar, "progress", binding.progressBar.progress, secondsLeft)
                 animator.duration = 400
                 animator.start()
 
-                // Renk değişimi: yeşil > sarı > kırmızı
                 val progressFraction = secondsLeft.toFloat() / binding.progressBar.max
                 binding.progressBar.progressTintList = when {
                     progressFraction > 0.5 -> ColorStateList.valueOf(Color.GREEN)
@@ -173,7 +224,6 @@ class MainActivity : AppCompatActivity() {
         }
         countDownTimer?.start()
 
-        // Görselleri rastgele gösteren döngü
         runnable?.let { handler.removeCallbacks(it) }
         runnable = object : Runnable {
             override fun run() {
@@ -186,7 +236,9 @@ class MainActivity : AppCompatActivity() {
                 lastVisibleIndex = randomIndex
 
                 imageViews[randomIndex].visibility = View.VISIBLE
-                handler.postDelayed(this, 700)
+
+                // Seçilen zorluk seviyesine göre hız
+                handler.postDelayed(this, currentDifficulty.delay)
             }
         }
         handler.post(runnable!!)
@@ -197,12 +249,14 @@ class MainActivity : AppCompatActivity() {
         runnable?.let { handler.removeCallbacks(it) }
         imageViews.forEach { it.visibility = View.INVISIBLE }
 
-        // Best score kontrolü ve kaydetme
         if (score > bestScore) {
             bestScore = score
             prefs.edit().putInt("best_score", bestScore).apply()
         }
         binding.bestScoreText.text = "Best: $bestScore"
+
+
+        showConfetti()
 
         val builder = AlertDialog.Builder(this@MainActivity)
         builder.setTitle("Oyun Bitti!")
@@ -219,5 +273,31 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
 
         binding.startButton.visibility = View.VISIBLE
+    }
+
+
+    private fun showConfetti() {
+        val root = binding.main
+        val particleCount = 25
+
+        repeat(particleCount) {
+            val confetti = View(this).apply {
+                setBackgroundColor(Color.rgb((50..255).random(), (50..255).random(), (50..255).random()))
+                layoutParams = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(20, 20)
+                alpha = 1f
+            }
+            root.addView(confetti)
+
+            confetti.x = (0..root.width).random().toFloat()
+            confetti.y = -50f
+
+            confetti.animate()
+                .translationY(root.height.toFloat())
+                .rotation((0..360).random().toFloat())
+                .alpha(0f)
+                .setDuration((1000..2000).random().toLong())
+                .withEndAction { root.removeView(confetti) }
+                .start()
+        }
     }
 }
