@@ -1,5 +1,8 @@
 package com.tugce.kennykotlin
 
+import android.animation.ObjectAnimator
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.os.Bundle
 import android.os.CountDownTimer
 import android.os.Handler
@@ -7,6 +10,7 @@ import android.os.Looper
 import android.view.View
 import android.widget.ImageView
 import android.util.TypedValue
+import android.view.HapticFeedbackConstants
 import android.view.animation.DecelerateInterpolator
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
@@ -18,7 +22,6 @@ import java.util.concurrent.ThreadLocalRandom
 import kotlin.math.cos
 import kotlin.math.sin
 
-
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val handler = Handler(Looper.getMainLooper())
@@ -27,6 +30,10 @@ class MainActivity : AppCompatActivity() {
     private var score = 0
     private val gameTime = 15000L
     private lateinit var imageViews: List<ImageView>
+
+    private val prefs by lazy { getSharedPreferences("kenny_prefs", MODE_PRIVATE) }
+    private var bestScore = 0
+    private var lastVisibleIndex = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +46,7 @@ class MainActivity : AppCompatActivity() {
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
+
         imageViews = listOf(
             binding.imageView1,
             binding.imageView2,
@@ -56,6 +64,14 @@ class MainActivity : AppCompatActivity() {
         binding.startButton.visibility = View.VISIBLE
         binding.timeText.text = "Time: ${gameTime / 1000}"
         binding.scoreText.text = "Score: 0"
+
+        // Best score
+        bestScore = prefs.getInt("best_score", 0)
+        binding.bestScoreText.text = "Best: $bestScore"
+
+        // ProgressBar ayarı
+        binding.progressBar.max = (gameTime / 1000).toInt()
+        binding.progressBar.progress = binding.progressBar.max
     }
 
     override fun onDestroy() {
@@ -66,9 +82,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun inCreaseScore(view: View) {
+        view.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         showSparkleEffectOver(view)
-        score = score + 1
-        binding.scoreText.text = "Score: ${score}"
+        score += 1
+        binding.scoreText.text = "Score: $score"
     }
 
     private fun showSparkleEffectOver(anchorView: View) {
@@ -111,9 +128,7 @@ class MainActivity : AppCompatActivity() {
                 .alpha(0f)
                 .setDuration(550)
                 .setInterpolator(DecelerateInterpolator())
-                .withEndAction {
-                    root.removeView(star)
-                }
+                .withEndAction { root.removeView(star) }
                 .start()
         }
     }
@@ -127,14 +142,32 @@ class MainActivity : AppCompatActivity() {
         score = 0
         binding.scoreText.text = "Score: 0"
 
+        // Progress bar’ı resetle
+        binding.progressBar.progress = binding.progressBar.max
+
         // Sayaç
         countDownTimer?.cancel()
         countDownTimer = object : CountDownTimer(gameTime, 1000) {
             override fun onTick(millisUntilFinished: Long) {
-                binding.timeText.text = "Time: ${millisUntilFinished / 1000}"
+                val secondsLeft = (millisUntilFinished / 1000).toInt()
+                binding.timeText.text = "Time: $secondsLeft"
+
+                // Smooth progress update
+                val animator = ObjectAnimator.ofInt(binding.progressBar, "progress", binding.progressBar.progress, secondsLeft)
+                animator.duration = 400
+                animator.start()
+
+                // Renk değişimi: yeşil > sarı > kırmızı
+                val progressFraction = secondsLeft.toFloat() / binding.progressBar.max
+                binding.progressBar.progressTintList = when {
+                    progressFraction > 0.5 -> ColorStateList.valueOf(Color.GREEN)
+                    progressFraction > 0.2 -> ColorStateList.valueOf(Color.YELLOW)
+                    else -> ColorStateList.valueOf(Color.RED)
+                }
             }
 
             override fun onFinish() {
+                binding.progressBar.progress = 0
                 endGame()
             }
         }
@@ -145,7 +178,13 @@ class MainActivity : AppCompatActivity() {
         runnable = object : Runnable {
             override fun run() {
                 imageViews.forEach { it.visibility = View.INVISIBLE }
-                val randomIndex = (imageViews.indices).random()
+
+                var randomIndex: Int
+                do {
+                    randomIndex = (imageViews.indices).random()
+                } while (randomIndex == lastVisibleIndex)
+                lastVisibleIndex = randomIndex
+
                 imageViews[randomIndex].visibility = View.VISIBLE
                 handler.postDelayed(this, 700)
             }
@@ -158,10 +197,16 @@ class MainActivity : AppCompatActivity() {
         runnable?.let { handler.removeCallbacks(it) }
         imageViews.forEach { it.visibility = View.INVISIBLE }
 
+        // Best score kontrolü ve kaydetme
+        if (score > bestScore) {
+            bestScore = score
+            prefs.edit().putInt("best_score", bestScore).apply()
+        }
+        binding.bestScoreText.text = "Best: $bestScore"
 
         val builder = AlertDialog.Builder(this@MainActivity)
         builder.setTitle("Oyun Bitti!")
-        builder.setMessage("Tekrar oynamak ister misiniz?")
+        builder.setMessage("Score: $score\nBest: $bestScore\nTekrar oynamak ister misiniz?")
         builder.setPositiveButton("Evet") { _, _ ->
             startGame(binding.startButton)
         }
@@ -172,7 +217,6 @@ class MainActivity : AppCompatActivity() {
         val dialog = builder.create()
         dialog.setCanceledOnTouchOutside(false)
         dialog.show()
-
 
         binding.startButton.visibility = View.VISIBLE
     }
